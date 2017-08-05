@@ -71,7 +71,7 @@ module.exports.apicall = function apicall(nog, postbox, inter, net, raw, make) {
 };
 
 
-module.exports.login = function login(username, password, cb) {
+module.exports.login = function(username, password, cb) {
     var ts = '' + Date.now();
     return module.exports.postCall('/ph/login', {
         username: username,
@@ -83,4 +83,46 @@ module.exports.login = function login(username, password, cb) {
             if(resp.auth_token) return(resp);
             else throw(resp);
 	}).nodeify(cb);
+};
+
+module.exports.upload = function(username, auth_token, stream, isVideo, cb) {
+    var ts = ''+Date.now();
+    isVideo = Number(!!isVideo);
+
+    var mediaId = (username + uuid()).toUpperCase();
+    var encrypt = spawn('openssl', ['enc', '-K', '4d3032636e5135314a69393776775434', '-aes-128-ecb']);
+    encrypt.stdout.pause();
+    stream.pipe(encrypt.stdin);
+
+    var form = new FormStream();
+    var req_token = e.hash(auth_token, ts);
+    form.addField('req_token', req_token);
+    form.addField('timestamp', ts);
+    form.addStream('data', 'media', 'application/octet-stream', encrypt.stdout);
+    form.addField('username', username);
+    form.addField('media_id', mediaId);
+    form.addField('type', isVideo);
+
+    return Q.promise(function(resolve,reject) {
+        var req = https.request({
+            host: hostname,
+            method: 'POST',
+            path: '/ph/upload',
+            headers: {
+                'Content-type': 'multipart/form-data; boundary=' + form.getBoundary(),
+                'User-Agent': user_agent,
+            }
+        }, function(res) {
+            res.setEncoding('ascii');
+            res.pipe(sink().on('data', function(data) {
+                if (res.statusCode != 200) return reject(data);
+                resolve(mediaId);
+            }));
+        });
+	form.on('data', function(data) {
+	    req.write(data);
+	}).on('end', function(end) {
+	    req.end(end);
+	});
+    }).nodeify(cb);;
 };
